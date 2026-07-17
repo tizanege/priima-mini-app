@@ -8,9 +8,43 @@ import {
   useTheme,
 } from "@chakra-ui/react";
 import { useAddUser } from "../../hooks/useUsers";
-import PropTypes from "prop-types"; // Import PropTypes
+import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import decodeToken from "../utilites";
+
+/**
+ * Returns the correct state key for a field.
+ *
+ * Basic fields are stored in the plugin as a keyed object:
+ *   { basic: { first_name: {...}, last_name: {...} } }
+ * So `arrayIndex` IS the real field ID (e.g., "first_name").
+ *
+ * Additional/custom fields are stored as a numerically-indexed array:
+ *   { additional: [ { id: "abc", name: "...", visibility: "on" }, ... ] }
+ * So the real field ID is inside `field.id`, not the array index.
+ *
+ * We must always use the real field ID as the key so that the PHP backend
+ * can match the submitted value to the correct field definition.
+ */
+function getFieldId(fieldGroupKey, arrayIndex, field) {
+  if (fieldGroupKey === "additional" && field?.id) {
+    return String(field.id);
+  }
+  return String(arrayIndex);
+}
+
+/**
+ * Normalize a userDetails group into an iterable array of { id, field } pairs.
+ * This unifies the keyed (basic) and indexed (additional) structures.
+ */
+function getFieldEntries(fieldGroupKey, fieldGroup) {
+  if (!fieldGroup || typeof fieldGroup !== "object") return [];
+
+  return Object.entries(fieldGroup).map(([arrayIndex, field]) => ({
+    id: getFieldId(fieldGroupKey, arrayIndex, field),
+    field,
+  }));
+}
 
 const UserForm = ({
   userDetails,
@@ -20,54 +54,51 @@ const UserForm = ({
   formSubmitText,
   notes,
 }) => {
-  const [formFields, setFormFields] = useState(() => {
+  /**
+   * Build initial state using the real field IDs as keys.
+   * fields_data shape: { basic: { first_name: "", last_name: "" }, additional: { "abc": "", "xyz": "" } }
+   */
+  const buildInitialState = (details) => {
     const initialFields = { fields_data: {} };
-    if (userDetails) {
-      Object.keys(userDetails).forEach((fieldKey) => {
-        initialFields.fields_data[fieldKey] = {};
-        Object.keys(userDetails[fieldKey]).forEach((key) => {
-          initialFields.fields_data[fieldKey][key] = userDetails[fieldKey][key].value || "";
-        });
+    if (!details) return initialFields;
+
+    Object.keys(details).forEach((fieldGroupKey) => {
+      initialFields.fields_data[fieldGroupKey] = {};
+      getFieldEntries(fieldGroupKey, details[fieldGroupKey]).forEach(({ id, field }) => {
+        initialFields.fields_data[fieldGroupKey][id] = field?.value || "";
       });
-    }
+    });
+
     return initialFields;
-  });
+  };
 
-  // Sync formFields if userDetails changes (e.g. from a background data refetch)
-  useEffect(() => {
-    if (userDetails) {
-      setFormFields((prev) => {
-        const updatedFields = { ...prev };
-        updatedFields.fields_data = updatedFields.fields_data || {};
-        
-        let hasChanges = false;
-        Object.keys(userDetails).forEach((fieldKey) => {
-          if (!updatedFields.fields_data[fieldKey]) {
-            updatedFields.fields_data[fieldKey] = {};
-            hasChanges = true;
-          }
-          Object.keys(userDetails[fieldKey]).forEach((key) => {
-            if (updatedFields.fields_data[fieldKey][key] === undefined) {
-              updatedFields.fields_data[fieldKey][key] = userDetails[fieldKey][key].value || "";
-              hasChanges = true;
-            }
-          });
-        });
-        
-        return hasChanges ? updatedFields : prev;
-      });
-    }
-  }, [userDetails]);
-
+  const [formFields, setFormFields] = useState(() => buildInitialState(userDetails));
   const { mutate: addUser, isLoading: mutateLoading } = useAddUser();
 
-  // const formStyles = {
-  //   display: "grid",
-  //   gridTemplateColumns: "1fr 1fr",
-  //   alignItems: "baseline",
-  //   columnGap: "67px",
-  //   rowGap: "14px",
-  // };
+  // Sync formFields when userDetails changes (e.g. after a background data refetch).
+  // Only add fields that are not yet in state — never overwrite user-typed values.
+  useEffect(() => {
+    if (!userDetails) return;
+
+    setFormFields((prev) => {
+      let hasChanges = false;
+      const nextFieldsData = { ...prev.fields_data };
+
+      Object.keys(userDetails).forEach((fieldGroupKey) => {
+        nextFieldsData[fieldGroupKey] = { ...(nextFieldsData[fieldGroupKey] || {}) };
+
+        getFieldEntries(fieldGroupKey, userDetails[fieldGroupKey]).forEach(({ id, field }) => {
+          if (nextFieldsData[fieldGroupKey][id] === undefined) {
+            nextFieldsData[fieldGroupKey][id] = field?.value || "";
+            hasChanges = true;
+          }
+        });
+      });
+
+      if (!hasChanges) return prev;
+      return { ...prev, fields_data: nextFieldsData };
+    });
+  }, [userDetails]);
 
   const theme = useTheme();
   const [, setIsFormSubmitted] = useState(false);
@@ -75,24 +106,24 @@ const UserForm = ({
 
   const submitHandler = (e) => {
     e.preventDefault();
-
     const { email } = decodeToken();
 
-    const emptyFieldsList = Object.keys(userDetails).reduce((acc, fieldKey) => {
-      return [
-        ...acc,
-        ...Object.keys(userDetails[fieldKey])
-          .filter(
-            (key) =>
-              userDetails[fieldKey][key].visibility !== "off" &&
-              key !== "email" &&
-              userDetails[fieldKey][key].visibility !== "optional"
-          )
-          .filter((key) => {
-              const val = formFields.fields_data?.[fieldKey]?.[key];
-              return val === undefined || val === null || String(val).trim() === "";
-            }),
-      ];
+    // Validate: collect IDs of required fields that are empty.
+    const emptyFieldsList = Object.keys(userDetails).reduce((acc, fieldGroupKey) => {
+      const entries = getFieldEntries(fieldGroupKey, userDetails[fieldGroupKey]);
+      const missing = entries
+        .filter(({ id, field }) => {
+          // Skip email (auto-filled) and optional/hidden fields
+          if (id === "email") return false;
+          if (field?.visibility === "off" || field?.visibility === "optional") return false;
+          if (field?.visibility !== "on") return false;
+
+          const val = formFields.fields_data?.[fieldGroupKey]?.[id];
+          return val === undefined || val === null || String(val).trim() === "";
+        })
+        .map(({ id }) => id);
+
+      return [...acc, ...missing];
     }, []);
 
     if (emptyFieldsList.length === 0) {
@@ -106,7 +137,6 @@ const UserForm = ({
           },
         },
       });
-
       setSuccessMessage(notes.new_user);
       setIsFormSubmitted(true);
       setEmptyFields([]);
@@ -140,100 +170,79 @@ const UserForm = ({
                 alignItems: "baseline",
                 columnGap: "67px",
                 rowGap: "14px",
-
                 "@media (max-width: 768px)": {
                   display: "flex",
                   flexDirection: "column",
                 },
               }}
             >
-              {Object.keys(userDetails).map((fieldKey) => (
-                <>
-                  {Object.keys(userDetails[fieldKey])
-                    .filter(
-                      (key) => userDetails[fieldKey][key].visibility !== "off"
-                    )
-                    .map((key) => {
-                      const field = userDetails[fieldKey][key];
-                      return (
-                        <FormControl key={key}>
-                          <>
-                            <FormLabel
-                              fontWeight="500"
-                              fontSize="14px"
-                              color={theme.colors.primary}
-                              display="flex"
-                            >
-                              {field?.name}:
-                              {field?.visibility === "on" && <Text>*</Text>}
-                            </FormLabel>
+              {Object.keys(userDetails).map((fieldGroupKey) =>
+                getFieldEntries(fieldGroupKey, userDetails[fieldGroupKey])
+                  .filter(({ field }) => field?.visibility !== "off")
+                  .map(({ id, field }) => (
+                    <FormControl key={`${fieldGroupKey}-${id}`}>
+                      <>
+                        <FormLabel
+                          fontWeight="500"
+                          fontSize="14px"
+                          color={theme.colors.primary}
+                          display="flex"
+                        >
+                          {field?.name}:
+                          {field?.visibility === "on" && <Text>*</Text>}
+                        </FormLabel>
 
-                            <Input
-                              background="#fff"
-                              maxWidth="100%"
-                              width="313px"
-                              height="25px"
-                              placeholder={field?.name}
-                              boxShadow="0px 0px 2px 0px rgba(33, 91, 124, 0.50) inset"
-                              size="sm"
-                              value={formFields.fields_data?.[fieldKey]?.[key] ?? field?.value ?? ""}
-                              borderRadius="5px"
-                              disabled={field?.name === "Email"}
-                              sx={{
-                                "&::placeholder": {
-                                  fontSize: "13px",
+                        <Input
+                          background="#fff"
+                          maxWidth="100%"
+                          width="313px"
+                          height="25px"
+                          placeholder={field?.name}
+                          boxShadow="0px 0px 2px 0px rgba(33, 91, 124, 0.50) inset"
+                          size="sm"
+                          value={formFields.fields_data?.[fieldGroupKey]?.[id] ?? ""}
+                          borderRadius="5px"
+                          disabled={id === "email"}
+                          sx={{
+                            "&::placeholder": {
+                              fontSize: "13px",
+                            },
+                            "&:disabled": {
+                              cursor: "pointer",
+                            },
+                          }}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setFormFields((prev) => ({
+                              ...prev,
+                              fields_data: {
+                                ...prev.fields_data,
+                                [fieldGroupKey]: {
+                                  ...(prev.fields_data?.[fieldGroupKey] || {}),
+                                  [id]: value,
                                 },
+                              },
+                            }));
 
-                                "&:disabled": {
-                                  cursor: "pointer", // Change cursor style for disabled input
-                                },
-                              }}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                  setFormFields((prev) => {
-                                    const prevFieldsData = prev.fields_data || {};
-                                    const prevFieldGroup = prevFieldsData[fieldKey] || {};
-
-                                    const newState = {
-                                      ...prev,
-                                      fields_data: {
-                                        ...prevFieldsData,
-                                        [fieldKey]: {
-                                          ...prevFieldGroup,
-                                          [key]: value
-                                        }
-                                      }
-                                    };
-
-                                    if (value.trim() === "") {
-                                    setEmptyFields((prevEmptyFields) =>
-                                      prevEmptyFields.includes(key)
-                                        ? prevEmptyFields
-                                        : [...prevEmptyFields, key]
-                                    );
-                                  } else {
-                                    setEmptyFields((prevEmptyFields) =>
-                                      prevEmptyFields.filter(
-                                        (emptyKey) => emptyKey !== key
-                                      )
-                                    );
-                                  }
-
-                                  return newState;
-                                });
-                              }}
-                            />
-                          </>
-                          {emptyFields.includes(key) && (
-                            <Text color="red" fontSize="12px">
-                              This field is required.
-                            </Text>
-                          )}
-                        </FormControl>
-                      );
-                    })}
-                </>
-              ))}
+                            // Update empty-fields indicator
+                            if (value.trim() === "") {
+                              setEmptyFields((prev) =>
+                                prev.includes(id) ? prev : [...prev, id]
+                              );
+                            } else {
+                              setEmptyFields((prev) => prev.filter((k) => k !== id));
+                            }
+                          }}
+                        />
+                      </>
+                      {emptyFields.includes(id) && (
+                        <Text color="red" fontSize="12px">
+                          This field is required.
+                        </Text>
+                      )}
+                    </FormControl>
+                  ))
+              )}
             </Box>
           </form>
 
@@ -260,7 +269,7 @@ const UserForm = ({
 };
 
 UserForm.propTypes = {
-  userDetails: PropTypes.object, // You can define a more specific PropTypes shape here if needed
+  userDetails: PropTypes.object,
   isLoading: PropTypes.bool,
   setSuccessMessage: PropTypes.func,
   infoText: PropTypes.string,
