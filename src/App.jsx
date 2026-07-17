@@ -15,10 +15,8 @@ function App() {
   const [successMessage, setSuccessMessage] = useState("");
 
   const password = localStorage.getItem("password");
-  if (password && data) {
-    if (data.user_details.password) {
-      data.user_details.password = JSON.parse(password);
-    }
+  if (password && data?.user_details?.password) {
+    data.user_details.password = JSON.parse(password);
   }
   useEffect(() => {
     const handleUnload = () => {
