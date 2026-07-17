@@ -88,7 +88,10 @@ const UserForm = ({
               key !== "email" &&
               userDetails[fieldKey][key].visibility !== "optional"
           )
-          .filter((key) => !formFields.fields_data?.[fieldKey]?.[key]),
+          .filter((key) => {
+              const val = formFields.fields_data?.[fieldKey]?.[key];
+              return val === undefined || val === null || String(val).trim() === "";
+            }),
       ];
     }, []);
 
