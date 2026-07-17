@@ -8,9 +8,9 @@ import {
   useTheme,
 } from "@chakra-ui/react";
 import { useAddUser } from "../../hooks/useUsers";
-import { useState } from "react";
-import decodeToken from "../utilites";
 import PropTypes from "prop-types"; // Import PropTypes
+import { useEffect, useState } from "react";
+import decodeToken from "../utilites";
 
 const UserForm = ({
   userDetails,
@@ -32,6 +32,33 @@ const UserForm = ({
     }
     return initialFields;
   });
+
+  // Sync formFields if userDetails changes (e.g. from a background data refetch)
+  useEffect(() => {
+    if (userDetails) {
+      setFormFields((prev) => {
+        const updatedFields = { ...prev };
+        updatedFields.fields_data = updatedFields.fields_data || {};
+        
+        let hasChanges = false;
+        Object.keys(userDetails).forEach((fieldKey) => {
+          if (!updatedFields.fields_data[fieldKey]) {
+            updatedFields.fields_data[fieldKey] = {};
+            hasChanges = true;
+          }
+          Object.keys(userDetails[fieldKey]).forEach((key) => {
+            if (updatedFields.fields_data[fieldKey][key] === undefined) {
+              updatedFields.fields_data[fieldKey][key] = userDetails[fieldKey][key].value || "";
+              hasChanges = true;
+            }
+          });
+        });
+        
+        return hasChanges ? updatedFields : prev;
+      });
+    }
+  }, [userDetails]);
+
   const { mutate: addUser, isLoading: mutateLoading } = useAddUser();
 
   // const formStyles = {
@@ -160,19 +187,22 @@ const UserForm = ({
                               }}
                               onChange={(e) => {
                                 const value = e.target.value;
-                                setFormFields((prev) => {
-                                  // Clone the existing state
-                                  const newState = { ...prev };
-                                  // Initialize the fields_data object if it doesn't exist
-                                  newState.fields_data =
-                                    newState.fields_data || {};
-                                  // Initialize the fieldKey object if it doesn't exist
-                                  newState.fields_data[fieldKey] =
-                                    newState.fields_data[fieldKey] || {};
-                                  // Update or add the key within the fieldKey object
-                                  newState.fields_data[fieldKey][key] = value;
+                                  setFormFields((prev) => {
+                                    const prevFieldsData = prev.fields_data || {};
+                                    const prevFieldGroup = prevFieldsData[fieldKey] || {};
 
-                                  if (value.trim() === "") {
+                                    const newState = {
+                                      ...prev,
+                                      fields_data: {
+                                        ...prevFieldsData,
+                                        [fieldKey]: {
+                                          ...prevFieldGroup,
+                                          [key]: value
+                                        }
+                                      }
+                                    };
+
+                                    if (value.trim() === "") {
                                     setEmptyFields((prevEmptyFields) =>
                                       prevEmptyFields.includes(key)
                                         ? prevEmptyFields
