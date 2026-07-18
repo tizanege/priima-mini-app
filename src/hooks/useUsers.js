@@ -29,10 +29,12 @@ export const useAddUser = () => {
     },
     {
       onSuccess: async (data) => {
-        localStorage.setItem(
-          "password",
-          JSON.stringify(data.user_details.password)
-        );
+        if (data?.user_details?.password) {
+          localStorage.setItem(
+            "password",
+            JSON.stringify(data.user_details.password)
+          );
+        }
         await queryClient.invalidateQueries(["verification-url", baseUrl]);
       },
       onError: () => {

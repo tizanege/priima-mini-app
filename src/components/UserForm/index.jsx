@@ -6,6 +6,8 @@ import {
   Input,
   Text,
   useTheme,
+  Alert,
+  AlertIcon,
 } from "@chakra-ui/react";
 import { useAddUser } from "../../hooks/useUsers";
 import PropTypes from "prop-types";
@@ -73,6 +75,7 @@ const UserForm = ({
   };
 
   const [formFields, setFormFields] = useState(() => buildInitialState(userDetails));
+  const [errorMessage, setErrorMessage] = useState("");
   const { mutate: addUser, isLoading: mutateLoading } = useAddUser();
 
   // Sync formFields when userDetails changes (e.g. after a background data refetch).
@@ -106,6 +109,7 @@ const UserForm = ({
 
   const submitHandler = (e) => {
     e.preventDefault();
+    setErrorMessage("");
     const { email } = decodeToken();
 
     // Validate: collect IDs of required fields that are empty.
@@ -127,22 +131,41 @@ const UserForm = ({
     }, []);
 
     if (emptyFieldsList.length === 0) {
-      addUser({
-        ...formFields,
-        fields_data: {
-          ...formFields.fields_data,
-          basic: {
-            ...formFields.fields_data?.basic,
-            email,
+      addUser(
+        {
+          ...formFields,
+          fields_data: {
+            ...formFields.fields_data,
+            basic: {
+              ...formFields.fields_data?.basic,
+              email,
+            },
           },
         },
-      });
-      setSuccessMessage(notes.new_user);
-      setIsFormSubmitted(true);
-      setEmptyFields([]);
+        {
+          onSuccess: (data) => {
+            if (data?.status === "error" || data?.status === "fail") {
+              setErrorMessage(data?.message || "Failed to register user.");
+              setSuccessMessage("");
+              setIsFormSubmitted(false);
+            } else {
+              setSuccessMessage(notes.new_user);
+              setErrorMessage("");
+              setIsFormSubmitted(true);
+              setEmptyFields([]);
+            }
+          },
+          onError: (err) => {
+            setErrorMessage(err?.message || "An unexpected error occurred during submission.");
+            setSuccessMessage("");
+            setIsFormSubmitted(false);
+          },
+        }
+      );
     } else {
       setIsFormSubmitted(false);
       setEmptyFields(emptyFieldsList);
+      setErrorMessage("Please fill in all required fields.");
     }
   };
 
@@ -162,6 +185,12 @@ const UserForm = ({
           </Text>
         </Box>
         <Box mt="64px">
+          {errorMessage && (
+            <Alert status="error" borderRadius="5px" mb="6" maxWidth="100%">
+              <AlertIcon />
+              <Box flex="1">{errorMessage}</Box>
+            </Alert>
+          )}
           <form>
             <Box
               sx={{
