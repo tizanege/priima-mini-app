@@ -8,6 +8,8 @@ import {
   useTheme,
   Alert,
   AlertIcon,
+  Select,
+  Textarea,
 } from "@chakra-ui/react";
 import { useAddUser } from "../../hooks/useUsers";
 import PropTypes from "prop-types";
@@ -221,48 +223,75 @@ const UserForm = ({
                           {field?.visibility === "on" && <Text>*</Text>}
                         </FormLabel>
 
-                        <Input
-                          background="#fff"
-                          maxWidth="100%"
-                          width="313px"
-                          height="25px"
-                          placeholder={field?.name}
-                          boxShadow="0px 0px 2px 0px rgba(33, 91, 124, 0.50) inset"
-                          size="sm"
-                          value={formFields.fields_data?.[fieldGroupKey]?.[id] ?? ""}
-                          borderRadius="5px"
-                          disabled={id === "email"}
-                          sx={{
-                            "&::placeholder": {
-                              fontSize: "13px",
-                            },
-                            "&:disabled": {
-                              cursor: "pointer",
-                            },
-                          }}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setFormFields((prev) => ({
-                              ...prev,
-                              fields_data: {
-                                ...prev.fields_data,
-                                [fieldGroupKey]: {
-                                  ...(prev.fields_data?.[fieldGroupKey] || {}),
-                                  [id]: value,
-                                },
+                        {(() => {
+                          const fieldType = field?.definition?.type || "text";
+                          const value = formFields.fields_data?.[fieldGroupKey]?.[id] ?? "";
+                          
+                          const commonProps = {
+                            background: "#fff",
+                            maxWidth: "100%",
+                            width: "313px",
+                            height: fieldType === "textarea" ? "auto" : "25px",
+                            placeholder: field?.name,
+                            boxShadow: "0px 0px 2px 0px rgba(33, 91, 124, 0.50) inset",
+                            size: "sm",
+                            value: value,
+                            borderRadius: "5px",
+                            disabled: id === "email",
+                            sx: {
+                              "&::placeholder": {
+                                fontSize: "13px",
                               },
-                            }));
+                              "&:disabled": {
+                                cursor: "pointer",
+                              },
+                            },
+                            onChange: (e) => {
+                              const val = e.target.value;
+                              setFormFields((prev) => ({
+                                ...prev,
+                                fields_data: {
+                                  ...prev.fields_data,
+                                  [fieldGroupKey]: {
+                                    ...(prev.fields_data?.[fieldGroupKey] || {}),
+                                    [id]: val,
+                                  },
+                                },
+                              }));
 
-                            // Update empty-fields indicator
-                            if (value.trim() === "") {
-                              setEmptyFields((prev) =>
-                                prev.includes(id) ? prev : [...prev, id]
-                              );
-                            } else {
-                              setEmptyFields((prev) => prev.filter((k) => k !== id));
+                              if (val.trim() === "") {
+                                setEmptyFields((prev) =>
+                                  prev.includes(id) ? prev : [...prev, id]
+                                );
+                              } else {
+                                setEmptyFields((prev) => prev.filter((k) => k !== id));
+                              }
                             }
-                          }}
-                        />
+                          };
+
+                          if (fieldType === "select") {
+                            let options = [];
+                            if (field?.definition?.options) {
+                              options = Array.isArray(field.definition.options) 
+                                ? field.definition.options 
+                                : String(field.definition.options).split(",").map(o => o.trim());
+                            }
+                            return (
+                              <Select {...commonProps}>
+                                <option value="" disabled hidden>{field?.name}</option>
+                                {options.map((opt) => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </Select>
+                            );
+                          }
+
+                          if (fieldType === "textarea") {
+                            return <Textarea {...commonProps} rows={3} />;
+                          }
+
+                          return <Input type={fieldType} {...commonProps} />;
+                        })()}
                       </>
                       {emptyFields.includes(id) && (
                         <Text color="red" fontSize="12px">
